@@ -5,8 +5,8 @@
   "type": "module",
   "main": "index.js",
   "bin": {
-    "next-route-mapper": "./index.js",
-    "nrm": "./index.js"
+    "next-route-mapper": "index.js",
+    "nrm": "index.js"
   },
   "scripts": {
     "scan": "node index.js",
