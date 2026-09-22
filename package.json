@@ -1,6 +1,6 @@
 {
   "name": "next-route-mapper",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Cross-platform CLI that scans a Next.js App Router project and lists every API endpoint with its HTTP methods (GET, POST, PUT, PATCH, DELETE, ...).",
   "type": "module",
   "main": "index.js",
