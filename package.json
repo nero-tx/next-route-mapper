@@ -1,15 +1,14 @@
 {
   "name": "next-route-mapper",
-  "version": "1.0.3",
-  "description": "Cross-platform CLI that scans a Next.js App Router project and lists every API endpoint with its HTTP methods (GET, POST, PUT, PATCH, DELETE, ...).",
+  "version": "1.0.0",
+  "description": "Zero-dependency CLI that scans Next.js App Router projects and sub-routes to list all API endpoints and HTTP methods.",
   "type": "module",
   "main": "index.js",
   "bin": {
     "next-route-mapper": "./index.js",
-    "nrm": "./index.js"
+    "nrmap": "./index.js"
   },
   "scripts": {
-    "scan": "node index.js",
     "test": "node --test",
     "pretest": "node -c index.js",
     "prepublishOnly": "npm test"
@@ -26,7 +25,9 @@
     "cli",
     "documentation",
     "route-mapper",
-    "endpoints"
+    "endpoints",
+    "api-endpoints",
+    "nextjs-api-routes"
   ],
   "author": {
     "name": "nero-tx",

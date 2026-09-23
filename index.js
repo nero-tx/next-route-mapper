@@ -3,7 +3,7 @@
  * next-route-mapper
  *
  * Scans a Next.js App Router project for API route handlers
- * (app/api/**\/route.ts|js|...) and lists every endpoint together
+ * (app/.../route.ts|js|...) and lists every endpoint together
  * with the HTTP methods it implements.
  *
  * Pure Node.js (fs/path only) — no shell commands — so it runs
@@ -67,38 +67,94 @@ const METHOD_COLOR_NAME = {
 function parseArgs(argv) {
   const args = {
     dir: null,
-    format: "table",
+    format: null,
     output: null,
     help: false,
-    color: true,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--dir" || a === "-d") args.dir = argv[++i];
-    else if (a === "--format" || a === "-f") args.format = argv[++i];
-    else if (a === "--output" || a === "-o") args.output = argv[++i];
-    else if (a === "--no-color") args.color = false;
-    else if (a === "--help" || a === "-h") args.help = true;
+    if (a === "-h" || a === "--help") {
+      args.help = true;
+    } else if (a === "-f" || a === "--format") {
+      args.format = argv[++i];
+    } else if (a === "-o" || a === "--output") {
+      args.output = argv[++i];
+    } else if (a === "-d" || a === "--dir") {
+      args.dir = argv[++i];
+    } else if (!a.startsWith("-")) {
+      if (!args.dir) {
+        args.dir = a;
+      }
+    }
   }
+
+  if (!args.format) {
+    if (args.output && args.output.endsWith(".json")) {
+      args.format = "json";
+    } else if (
+      args.output &&
+      (args.output.endsWith(".md") || args.output.endsWith(".markdown"))
+    ) {
+      args.format = "markdown";
+    } else {
+      args.format = "table";
+    }
+  }
+
   return args;
+}
+
+function resolveRouteBase(startDir, scanDir) {
+  const absScan = path.resolve(scanDir);
+
+  const apiMatch = absScan.match(/(^|[/\\])(?:src[/\\])?app[/\\]api([/\\]|$)/);
+  if (apiMatch) {
+    const idx = absScan.indexOf(apiMatch[0]);
+    return absScan.slice(0, idx + apiMatch[0].replace(/[/\\]$/, "").length);
+  }
+
+  const appMatch = absScan.match(/(^|[/\\])(?:src[/\\])?app([/\\]|$)/);
+  if (appMatch) {
+    const idx = absScan.indexOf(appMatch[0]);
+    return absScan.slice(0, idx + appMatch[0].replace(/[/\\]$/, "").length);
+  }
+
+  return scanDir;
 }
 
 function findApiDir(startDir) {
   const candidates = [
     path.join(startDir, "app", "api"),
     path.join(startDir, "src", "app", "api"),
+    path.join(startDir, "app"),
+    path.join(startDir, "src", "app"),
+    startDir,
   ];
+
   for (const c of candidates) {
-    if (fs.existsSync(c) && fs.statSync(c).isDirectory()) return c;
+    if (fs.existsSync(c) && fs.statSync(c).isDirectory()) {
+      if (c === startDir) {
+        const files = walk(c);
+        if (files.length > 0) return c;
+      } else {
+        return c;
+      }
+    }
   }
   return null;
 }
 
 function walk(dir, fileList = []) {
-  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return fileList;
+  }
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
+      if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
       walk(full, fileList);
     } else if (/^route\.(ts|tsx|js|jsx|mjs|cjs)$/.test(entry.name)) {
       fileList.push(full);
@@ -110,27 +166,33 @@ function walk(dir, fileList = []) {
 function extractMethods(fileContent) {
   const found = new Set();
 
-  // export async function GET(...) / export function POST(...)
+  // export async function GET(...) / export function* POST(...)
   const fnPattern =
-    /export\s+(?:async\s+)?function\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*\(/g;
+    /export\s+(?:async\s+)?function\s*\*?\s*(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/g;
   let m;
   while ((m = fnPattern.exec(fileContent))) found.add(m[1]);
 
-  // export const GET = ... / export const GET: SomeType = ...
+  // export const GET = ... / export let POST: SomeType = ...
   const constPattern =
-    /export\s+const\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s*[:=]/g;
+    /export\s+(?:const|let|var)\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b\s*[:=]/g;
   while ((m = constPattern.exec(fileContent))) found.add(m[1]);
 
-  // export { GET, POST as CustomName } — plain re-exports
+  // export { ... } re-exports (e.g. export { GET, POST as CustomName }, export { handler as GET } from './x')
   const reExportBlocks = fileContent.match(/export\s*{([^}]+)}/g);
   if (reExportBlocks) {
     for (const block of reExportBlocks) {
-      for (const method of HTTP_METHODS) {
-        const re = new RegExp(
-          `(^|[\\s,{])${method}(\\s*,|\\s*}|\\s+as\\s+)`,
-          "m",
-        );
-        if (re.test(block)) found.add(method);
+      const inner = block.replace(/^export\s*{/, "").replace(/}.*$/, "");
+      const items = inner.split(",");
+      for (const rawItem of items) {
+        const item = rawItem.trim();
+        if (!item) continue;
+        let exportedName = item;
+        if (/\s+as\s+/.test(item)) {
+          exportedName = item.split(/\s+as\s+/)[1].trim();
+        }
+        if (HTTP_METHODS.includes(exportedName)) {
+          found.add(exportedName);
+        }
       }
     }
   }
@@ -140,17 +202,32 @@ function extractMethods(fileContent) {
 
 function toRoutePath(apiDir, filePath) {
   let rel = path.relative(apiDir, path.dirname(filePath));
-  rel = rel.split(path.sep).join("/"); // normalize Windows backslashes to forward slashes
-  // Strip Next.js route groups: segments wrapped in parentheses, e.g. (admin)
-  const segments = rel.split("/").filter((seg) => seg && !/^\(.*\)$/.test(seg));
+  rel = rel.split(path.sep).join("/"); // normalize Windows backslashes
+
+  if (!rel || rel === ".") return "/";
+
+  const rawSegments = rel.split("/").filter(Boolean);
+  const segments = [];
+
+  for (let seg of rawSegments) {
+    // Strip route groups: (group)
+    if (/^\([^)]+\)$/.test(seg)) continue;
+    // Strip parallel route slots: @slot
+    if (seg.startsWith("@")) continue;
+    // Strip intercepting route markers: (.), (..), (...)
+    seg = seg.replace(/^\(\.\.\.|\(\.\.|\(\.\)/, "");
+    if (seg) segments.push(seg);
+  }
+
   const routePath = "/" + segments.join("/");
-  return routePath === "/" ? "/" : routePath;
+  return routePath;
 }
 
 function scan(apiDir) {
   const files = walk(apiDir);
+  const baseDir = resolveRouteBase(apiDir, apiDir);
   const results = files.map((file) => ({
-    route: toRoutePath(apiDir, file),
+    route: toRoutePath(baseDir, file),
     methods: extractMethods(fs.readFileSync(file, "utf8")),
     file: path.relative(process.cwd(), file).split(path.sep).join("/"),
   }));
@@ -160,8 +237,6 @@ function scan(apiDir) {
 
 // Table rendering
 function visibleLength(str) {
-  // Strip ANSI escape codes before measuring, so padding lines up
-  // correctly even when colors are enabled.
   return str.replace(/\x1b\[[0-9;]*m/g, "").length;
 }
 
@@ -176,12 +251,12 @@ function colorizeMethods(r, c) {
     .join(c.dim(", "));
 }
 
-function printTable(results, colorEnabled) {
+function renderTable(results, colorEnabled) {
   const c = buildColorizer(colorEnabled);
+  const lines = [];
 
   if (results.length === 0) {
-    console.log(c.yellow("No API routes found."));
-    return;
+    return c.yellow("No API routes found.");
   }
 
   const rows = results.map((r) => ({
@@ -217,11 +292,11 @@ function printTable(results, colorEnabled) {
     padVisible(c.bold(c.white("FILE")), fileWidth) +
     " │";
 
-  console.log("");
-  console.log(c.bold(c.brightCyan("Next.js API Routes")));
-  console.log(c.dim(top));
-  console.log(headerRow);
-  console.log(c.dim(mid));
+  lines.push("");
+  lines.push(c.bold(c.brightCyan("Next.js API Routes")));
+  lines.push(c.dim(top));
+  lines.push(headerRow);
+  lines.push(c.dim(mid));
 
   for (const r of rows) {
     const line =
@@ -232,15 +307,17 @@ function printTable(results, colorEnabled) {
       " │ " +
       padVisible(c.dim(r.file), fileWidth) +
       " │";
-    console.log(line);
+    lines.push(line);
   }
 
-  console.log(c.dim(bot));
-  console.log(
+  lines.push(c.dim(bot));
+  lines.push(
     c.bold("\nTotal endpoints: ") +
       c.brightGreen(c.bold(String(results.length))) +
       "\n",
   );
+
+  return lines.join("\n");
 }
 
 function toMarkdown(results) {
@@ -256,22 +333,20 @@ function printHelp() {
 next-route-mapper — list every Next.js App Router API endpoint and its HTTP methods
  
 Usage:
-  node index.js [options]
-  npx next-route-mapper [options]
+  npx nrmap [path] [options]
+  npx next-route-mapper [path] [options]
  
 Options:
-  -d, --dir <path>       Project root to scan (default: current directory)
   -f, --format <type>    Output format: table | json | markdown (md) (default: table)
   -o, --output <file>    Write output to a file instead of stdout
-      --no-color         Disable colored output
   -h, --help             Show this help message
  
 Examples:
-  node index.js
-  node index.js --dir ../my-next-app
-  node index.js --no-color
-  node index.js --format markdown --output API.md or node index.js -f md -o API.md
-  node index.js --format json --output routes.json
+  npx nrmap
+  npx nrmap ./my-next-app
+  npx nrmap app/api/auth
+  npx nrmap ./my-next-app -f md
+  npx nrmap ./my-next-app -f json -o routes.json
 `);
 }
 
@@ -284,7 +359,7 @@ function main() {
 
   if (!apiDir) {
     console.error(
-      `Could not find an "app/api" or "src/app/api" directory under:\n  ${root}\n\nPass --dir to point at your Next.js project root, e.g.:\n  node index.js --dir ../my-next-app`,
+      `Could not find an "app" or "src/app" directory under:\n  ${root}\n\nSpecify the project path as an argument, e.g.:\n  npx nrmap ../my-next-app`,
     );
     process.exitCode = 1;
     return;
@@ -293,19 +368,17 @@ function main() {
   const results = scan(apiDir);
 
   const colorEnabled =
-    args.color &&
     !process.env.NO_COLOR &&
     Boolean(process.stdout.isTTY || process.env.FORCE_COLOR);
 
-  if (!args.output && args.format === "table") {
-    return printTable(results, colorEnabled);
-  }
-
   let output;
+  const isTable = args.format === "table";
   if (args.format === "json") {
     output = JSON.stringify(results, null, 2);
   } else if (args.format === "markdown" || args.format === "md") {
     output = toMarkdown(results);
+  } else if (isTable) {
+    output = renderTable(results, args.output ? false : colorEnabled);
   } else {
     output = toMarkdown(results);
   }
@@ -318,14 +391,16 @@ function main() {
   }
 }
 
-// ESM equivalent of CommonJS's `require.main === module`: only auto-run
-// main() when this file is executed directly (as the CLI), not when it's
-// imported by the test suite.
-const isMainModule =
-  process.argv[1] &&
-  fileURLToPath(import.meta.url) === path.resolve(process.argv[1]);
+function isMain() {
+  if (!process.argv[1]) return false;
+  try {
+    return fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
 
-if (isMainModule) {
+if (isMain()) {
   main();
 }
 
@@ -337,6 +412,7 @@ export {
   toRoutePath,
   scan,
   toMarkdown,
+  renderTable,
   visibleLength,
   buildColorizer,
   HTTP_METHODS,

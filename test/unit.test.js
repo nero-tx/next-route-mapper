@@ -30,8 +30,9 @@ test('extractMethods: detects "export const GET = ..." arrow-function style', ()
   const src = `
     export const GET = async (req) => new Response('ok');
     export const PATCH: RouteHandler = async () => {};
+    export let PUT = async () => {};
   `;
-  assert.deepEqual(extractMethods(src), ["GET", "PATCH"]);
+  assert.deepEqual(extractMethods(src), ["GET", "PUT", "PATCH"]);
 });
 
 test('extractMethods: detects plain "export { GET, POST }" re-exports', () => {
@@ -39,6 +40,14 @@ test('extractMethods: detects plain "export { GET, POST }" re-exports', () => {
     async function GET() {}
     async function POST() {}
     export { GET, POST };
+  `;
+  assert.deepEqual(extractMethods(src), ["GET", "POST"]);
+});
+
+test('extractMethods: detects aliased re-exports "export { handler as GET }"', () => {
+  const src = `
+    function customHandler() {}
+    export { customHandler as GET, default as POST };
   `;
   assert.deepEqual(extractMethods(src), ["GET", "POST"]);
 });
@@ -63,6 +72,7 @@ test("extractMethods: does not false-positive on unrelated exported identifiers"
   const src = `
     export const GETTER_UTIL = 1;
     export async function GETSomethingElse() {}
+    export { GET as myCustomExport };
   `;
   assert.deepEqual(extractMethods(src), []);
 });
@@ -99,12 +109,15 @@ test("toRoutePath: strips route groups wrapped in parentheses", () => {
   assert.equal(toRoutePath(apiDir, file), "/stats");
 });
 
+test("toRoutePath: strips parallel route slots starting with @", () => {
+  const apiDir = path.join("project", "app");
+  const file = path.join(apiDir, "@modal", "login", "route.ts");
+  assert.equal(toRoutePath(apiDir, file), "/login");
+});
+
 test("toRoutePath: normalizes Windows-style backslash separators", () => {
   const apiDir = "C:\\project\\app\\api";
   const file = "C:\\project\\app\\api\\users\\route.ts";
-  // path.relative/path.sep behave per-OS; this test only checks behavior
-  // on the current platform's own separator, which is what toRoutePath
-  // actually normalizes at runtime.
   const localApiDir = path.join("project", "app", "api");
   const localFile = path.join(localApiDir, "users", "route.ts");
   assert.equal(toRoutePath(localApiDir, localFile), "/users");
@@ -112,26 +125,25 @@ test("toRoutePath: normalizes Windows-style backslash separators", () => {
 
 // parseArgs
 
-test("parseArgs: defaults to table format, cwd, colors on", () => {
+test("parseArgs: defaults to table format, cwd, help false", () => {
   const args = parseArgs([]);
   assert.equal(args.dir, null);
   assert.equal(args.format, "table");
   assert.equal(args.output, null);
-  assert.equal(args.color, true);
   assert.equal(args.help, false);
 });
 
-test("parseArgs: parses --dir/-d, --format/-f, --output/-o", () => {
-  assert.equal(parseArgs(["--dir", "../app"]).dir, "../app");
-  assert.equal(parseArgs(["-d", "../app"]).dir, "../app");
-  assert.equal(parseArgs(["--format", "json"]).format, "json");
+test("parseArgs: parses positional path and -f, -o flags", () => {
+  assert.equal(parseArgs(["../app"]).dir, "../app");
+  assert.equal(parseArgs(["../app", "-f", "json"]).dir, "../app");
+  assert.equal(parseArgs(["../app", "-f", "json"]).format, "json");
   assert.equal(parseArgs(["-f", "markdown"]).format, "markdown");
-  assert.equal(parseArgs(["--output", "out.md"]).output, "out.md");
   assert.equal(parseArgs(["-o", "out.md"]).output, "out.md");
+  assert.equal(parseArgs(["-o", "out.md"]).format, "markdown");
+  assert.equal(parseArgs(["-o", "out.json"]).format, "json");
 });
 
-test("parseArgs: --no-color disables color, --help/-h sets help", () => {
-  assert.equal(parseArgs(["--no-color"]).color, false);
+test("parseArgs: --help/-h sets help", () => {
   assert.equal(parseArgs(["--help"]).help, true);
   assert.equal(parseArgs(["-h"]).help, true);
 });
@@ -182,3 +194,4 @@ test("visibleLength: ignores ANSI escape codes when measuring length", () => {
   assert.equal(visibleLength(colored), 3);
   assert.equal(visibleLength("GET"), 3);
 });
+

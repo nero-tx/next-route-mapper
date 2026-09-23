@@ -110,12 +110,26 @@ test("scan: results are sorted alphabetically by route", () => {
   }
 });
 
+test("scan: supports scanning sub-folder paths directly", () => {
+  const root = makeFixtureProject();
+  try {
+    const subDir = path.join(root, "app", "api", "auth");
+    const results = scan(subDir);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].route, "/auth/login");
+    assert.deepEqual(results[0].methods, ["POST"]);
+  } finally {
+    cleanup(root);
+  }
+});
+
 //  CLI — exercised as a real subprocess, exactly as an end user runs it
 test("CLI: table output lists every route and a total count", () => {
   const root = makeFixtureProject();
   try {
-    const out = execFileSync("node", [CLI_PATH, "--dir", root, "--no-color"], {
+    const out = execFileSync("node", [CLI_PATH, root], {
       encoding: "utf8",
+      env: { ...process.env, NO_COLOR: "1" },
     });
     assert.match(out, /\/products\/\[id\]/);
     assert.match(out, /GET, PATCH, DELETE/);
@@ -125,18 +139,17 @@ test("CLI: table output lists every route and a total count", () => {
   }
 });
 
-test("CLI: --format json produces valid, parseable JSON matching scan()", () => {
+test("CLI: -f json produces valid, parseable JSON matching scan()", () => {
   const root = makeFixtureProject();
   try {
     const out = execFileSync(
       "node",
       [
         CLI_PATH,
-        "--dir",
         root,
-        "--format",
+        "-f",
         "json",
-        "--output",
+        "-o",
         path.join(root, "routes.json"),
       ],
       { encoding: "utf8" },
@@ -154,12 +167,12 @@ test("CLI: --format json produces valid, parseable JSON matching scan()", () => 
   }
 });
 
-test("CLI: --format markdown produces a markdown table", () => {
+test("CLI: -f md produces a markdown table", () => {
   const root = makeFixtureProject();
   try {
     const out = execFileSync(
       "node",
-      [CLI_PATH, "--dir", root, "--format", "markdown"],
+      [CLI_PATH, root, "-f", "md"],
       {
         encoding: "utf8",
       },
@@ -188,6 +201,6 @@ test("CLI: exits with a non-zero code and a helpful message when app/api is miss
 test("CLI: --help prints usage and exits 0", () => {
   const out = execFileSync("node", [CLI_PATH, "--help"], { encoding: "utf8" });
   assert.match(out, /next-route-mapper/);
-  assert.match(out, /--dir/);
-  assert.match(out, /--format/);
+  assert.match(out, /-f, --format/);
+  assert.match(out, /-o, --output/);
 });
