@@ -1,6 +1,6 @@
 {
   "name": "next-route-mapper",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Zero-dependency CLI that scans Next.js App Router projects and sub-routes to list all API endpoints and HTTP methods.",
   "type": "module",
   "main": "index.js",
